@@ -24,6 +24,12 @@ const problems = ref<RowProblem[]>([]);
 const notice = ref<string | null>(null);
 const error = ref<string | null>(null);
 const confirming = ref(false);
+const personsRow = ref<HTMLElement | null>(null);
+/** The QC people on this document, persisted through `updateHeader`. */
+const selectors = ref<string[]>([]);
+const measurers = ref<string[]>([]);
+const personPicker = ref<"selector" | "measurer" | null>(null);
+const employees = computed(() => store.reference?.employees ?? []);
 /** Set aside so a fill-down can be undone; the desk form offers no way back. */
 const undo = ref<{ label: string; patches: { id: number; grade: string | null }[] } | null>(null);
 
@@ -34,11 +40,50 @@ const total = computed(() => doc.value?.grand_total ?? 0);
 async function load(): Promise<void> {
 	doc.value = await window.qc.checklist.load(props.localName);
 	await refreshDerived();
+	syncPersons();
 }
 
 async function refreshDerived(): Promise<void> {
 	summary.value = await window.qc.checklist.summary(props.localName);
 	problems.value = await window.qc.checklist.validate(props.localName);
+}
+
+function syncPersons(): void {
+	selectors.value = doc.value?.selectors ?? [];
+	measurers.value = doc.value?.measurers ?? [];
+}
+
+/** Persist both person lists in one call; the local DB is what the push reads. */
+async function commitPersons(): Promise<void> {
+	if (!doc.value) return;
+	try {
+		await window.qc.checklist.updateHeader(doc.value.local_name, {
+			selectors: selectors.value,
+			measurers: measurers.value,
+		});
+	} catch (caught) {
+		error.value = (caught as Error).message;
+	}
+}
+
+function togglePerson(kind: "selector" | "measurer", name: string): void {
+	const target = kind === "selector" ? selectors : measurers;
+	const index = target.value.indexOf(name);
+	if (index === -1) target.value.push(name);
+	else target.value.splice(index, 1);
+	void commitPersons();
+}
+
+function personName(name: string): string {
+	return employees.value.find((row) => row.name === name)?.employee_name ?? name;
+}
+
+/** Close the person lists when the operator clicks anywhere else. */
+function onDocumentClick(event: MouseEvent): void {
+	if (!personPicker.value) return;
+	if (personsRow.value && !personsRow.value.contains(event.target as Node)) {
+		personPicker.value = null;
+	}
 }
 
 async function apply(patches: { id: number; grade?: string | null; feetage?: number }[]): Promise<void> {
@@ -123,6 +168,7 @@ async function setReturnPieces(event: Event): Promise<void> {
 async function confirmChecklist(): Promise<void> {
 	confirming.value = true;
 	error.value = null;
+	personPicker.value = null;
 	try {
 		const result = await window.qc.checklist.confirm(props.localName);
 		problems.value = result.problems;
@@ -149,7 +195,12 @@ async function updateInwardQty(): Promise<void> {
 	}
 }
 
-onMounted(load);
+onMounted(() => {
+	document.addEventListener("click", onDocumentClick);
+	// Refresh masters (e.g. a freshly pulled employee list) without disturbing the doc.
+	void store.loadReference().catch(() => undefined);
+	void load();
+});
 </script>
 
 <template>
@@ -184,6 +235,64 @@ onMounted(load);
 				</button>
 			</div>
 		</header>
+
+		<div ref="personsRow" class="persons">
+			<label class="persons__field">
+				<span class="persons__label">Selector</span>
+				<span class="persons__pop">
+					<button
+						type="button"
+						class="persons__toggle"
+						:disabled="readonly"
+						@click.stop="personPicker = personPicker === 'selector' ? null : 'selector'"
+					>
+						{{ selectors.length ? selectors.map(personName).join(", ") : "Pick the selector(s)" }}
+					</button>
+					<ul v-if="personPicker === 'selector'" class="persons__list">
+						<li
+							v-for="employee in employees"
+							:key="employee.name"
+							class="persons__item"
+							:class="{ 'persons__item--on': selectors.includes(employee.name) }"
+							@click.stop="togglePerson('selector', employee.name)"
+						>
+							{{ employee.employee_name ?? employee.name }}
+						</li>
+						<li v-if="!employees.length" class="persons__empty">
+							No employees have synced from ERPNext yet. Pull masters first.
+						</li>
+					</ul>
+				</span>
+			</label>
+
+			<label class="persons__field">
+				<span class="persons__label">Measurer</span>
+				<span class="persons__pop">
+					<button
+						type="button"
+						class="persons__toggle"
+						:disabled="readonly"
+						@click.stop="personPicker = personPicker === 'measurer' ? null : 'measurer'"
+					>
+						{{ measurers.length ? measurers.map(personName).join(", ") : "Pick the measurer(s)" }}
+					</button>
+					<ul v-if="personPicker === 'measurer'" class="persons__list">
+						<li
+							v-for="employee in employees"
+							:key="employee.name"
+							class="persons__item"
+							:class="{ 'persons__item--on': measurers.includes(employee.name) }"
+							@click.stop="togglePerson('measurer', employee.name)"
+						>
+							{{ employee.employee_name ?? employee.name }}
+						</li>
+						<li v-if="!employees.length" class="persons__empty">
+							No employees have synced from ERPNext yet. Pull masters first.
+						</li>
+					</ul>
+				</span>
+			</label>
+		</div>
 
 		<p v-if="notice" class="notice">
 			{{ notice }}
@@ -308,6 +417,93 @@ h1 {
 
 .inline input {
 	width: 6rem;
+}
+
+/* Selector and Measurer are Table MultiSelect fields on the desk form; on a terminal
+   they become a dropdown over the synced Employee master, persisted to the local DB. */
+.persons {
+	display: flex;
+	gap: 0.9rem;
+	flex-wrap: wrap;
+}
+
+.persons__field {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	font-size: 0.82rem;
+}
+
+.persons__label {
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	font-size: 0.72rem;
+	color: var(--muted);
+}
+
+.persons__pop {
+	position: relative;
+}
+
+.persons__toggle {
+	min-width: 13rem;
+	padding: 0.25rem 1.6rem 0.25rem 0.6rem;
+	text-align: left;
+	font-size: 0.82rem;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.persons__toggle:disabled {
+	opacity: 0.7;
+	cursor: not-allowed;
+}
+
+.persons__toggle::after {
+	content: "\25be";
+	position: absolute;
+	right: 0.5rem;
+	top: 50%;
+	transform: translateY(-50%);
+	color: var(--muted);
+	font-size: 0.7rem;
+}
+
+.persons__list {
+	position: absolute;
+	z-index: 30;
+	top: 100%;
+	left: 0;
+	margin: 0;
+	padding: 0.15rem;
+	min-width: 100%;
+	max-height: 16rem;
+	overflow-y: auto;
+	list-style: none;
+	border: 1px solid var(--line);
+	border-radius: 5px;
+	background: var(--surface);
+	box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+}
+
+.persons__item {
+	padding: 0.3rem 0.5rem;
+	border-radius: 3px;
+	cursor: pointer;
+	white-space: nowrap;
+	color: var(--text);
+}
+
+.persons__item--on {
+	background: var(--accent);
+	color: var(--surface);
+}
+
+.persons__empty {
+	padding: 0.3rem 0.5rem;
+	color: var(--muted);
+	font-size: 0.8rem;
 }
 
 .body {

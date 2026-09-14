@@ -184,6 +184,25 @@ describe("master mirror", () => {
 		expect(indexes.warnings.overlaps).toEqual([]);
 	});
 
+	it("mirrors employees for the Selector and Measurer pickers", () => {
+		const seeded = pullFixture();
+		seeded.doctypes.Employee = {
+			permitted: true,
+			rows: [
+				{ name: "EMP-1", employee_name: "Ali Raza", status: "Active", modified: "m1" },
+				{ name: "EMP-2", employee_name: "Bina Shah", status: "Active", modified: "m2" },
+			],
+			children: {},
+			cursor: { modified: "m2", name: "EMP-2" },
+			has_more: false,
+		};
+		applyPullResult(db, seeded);
+		expect(loadMasterIndexes(db).employees).toEqual([
+			{ name: "EMP-1", employee_name: "Ali Raza" },
+			{ name: "EMP-2", employee_name: "Bina Shah" },
+		]);
+	});
+
 	it("offers only GRNs that are not already Complete", () => {
 		applyPullResult(db, pullFixture());
 		expect(listOpenInwards(db).map((row) => row.name)).toEqual(["IRH-1"]);

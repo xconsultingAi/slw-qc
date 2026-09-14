@@ -171,6 +171,7 @@ export interface MasterIndexes {
 	grades: string[];
 	skinTypeByItem: Map<string, string | null>;
 	ratesVisible: boolean;
+	employees: { name: string; employee_name: string | null }[];
 	/** Data problems worth showing the operator before a shift, not during one. */
 	warnings: { overlaps: ReturnType<typeof findOverlaps>; gaps: ReturnType<typeof findGaps> };
 }
@@ -203,6 +204,9 @@ export function loadMasterIndexes(db: Db): MasterIndexes {
 			| { value: string }
 			| undefined)?.value === "1";
 
+	const employees = sql(db, "SELECT name, employee_name FROM employees ORDER BY employee_name")
+		.all() as { name: string; employee_name: string | null }[];
+
 	const sizeIndex = buildSizeIndex(ranges);
 
 	return {
@@ -211,6 +215,7 @@ export function loadMasterIndexes(db: Db): MasterIndexes {
 		grades,
 		skinTypeByItem,
 		ratesVisible,
+		employees,
 		warnings: { overlaps: findOverlaps(sizeIndex), gaps: findGaps(sizeIndex) },
 	};
 }

@@ -39,6 +39,7 @@ export interface ReferenceData {
 		overlaps: { skin_type: string; a: string; b: string }[];
 		gaps: { skin_type: string; from: number; to: number }[];
 	};
+	employees: { name: string; employee_name: string | null }[];
 }
 
 export interface QcApi {

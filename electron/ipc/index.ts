@@ -69,6 +69,7 @@ export function registerIpc(context: AppContext): void {
 			grades: indexes.grades,
 			ratesVisible: indexes.ratesVisible,
 			warnings: indexes.warnings,
+			employees: indexes.employees,
 		};
 	});
 
