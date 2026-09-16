@@ -36,6 +36,7 @@ const props = defineProps<{
 const emit = defineEmits<{
 	(event: "commit", payload: { id: number; field: "grade" | "feetage" | "status"; value: string }): void;
 	(event: "reject", message: string): void;
+	(event: "editorSave", payload: { id: number; grade: string; feetage: string }): void;
 }>();
 
 const ROW_HEIGHT = 34;
@@ -66,6 +67,90 @@ const picker = ref<{
 } | null>(null);
 
 const pickerList = ref<HTMLElement | null>(null);
+
+/**
+ * The single-row editor opened by a row's Edit button.
+ *
+ * Unlike the inline grade cell - which fills a grade into every row below, as the desk
+ * form does - this dialog changes only the row it was opened from. That is the desk
+ * form's "Edit Grade" dialog: when a run needs one row corrected, the operator must be
+ * able to fix that row without rewriting the work beneath it.
+ */
+const editor = ref<{
+	id: number;
+	idx: number;
+	item_code: string | null;
+	grade: string;
+	feetage: string;
+	error: string | null;
+} | null>(null);
+
+const editorGradeInput = ref<HTMLInputElement | null>(null);
+const editorFeetageInput = ref<HTMLInputElement | null>(null);
+
+const editorOptions = computed(() =>
+	editor.value ? gradeOptions(props.grades, editor.value.grade) : []
+);
+
+function openEditor(row: DetailRow): void {
+	editor.value = {
+		id: row.id,
+		idx: row.idx,
+		item_code: row.item_code,
+		grade: row.grade ?? "",
+		feetage: row.feetage ? String(row.feetage) : "",
+		error: null,
+	};
+	void nextTick(() => editorGradeInput.value?.focus());
+}
+
+function pickEditorGrade(value: string): void {
+	if (editor.value) editor.value.grade = value;
+}
+
+function onEditorFeetageInput(event: Event): void {
+	const input = event.target as HTMLInputElement;
+	const raw = input.value;
+	const clean = sanitizeDecimal(raw);
+
+	if (clean !== raw) {
+		const caret = caretAfterSanitize(raw, input.selectionStart ?? raw.length);
+		input.value = clean;
+		input.setSelectionRange(caret, caret);
+	}
+
+	if (editor.value) editor.value.feetage = clean;
+}
+
+/** Enter in the grade box takes the best match and hands the next keystroke to feetage. */
+function onEditorGradeKeydown(event: KeyboardEvent): void {
+	if (event.key !== "Enter") return;
+	event.preventDefault();
+	const open = editor.value;
+	if (!open) return;
+
+	const exact = matchGrade(props.grades, open.grade);
+	if (!exact && editorOptions.value.length) open.grade = editorOptions.value[0]!;
+	editorFeetageInput.value?.focus();
+}
+
+/** A grade must be one the master defines, or it is refused here rather than at submit. */
+function editorSave(): void {
+	const open = editor.value;
+	if (!open) return;
+
+	const typed = open.grade.trim();
+	const matched = matchGrade(props.grades, typed);
+	if (typed && !matched) {
+		open.error = props.grades.length
+			? `"${typed}" is not a grade. Pick one from the list.`
+			: "No grades have synced from ERPNext yet, so a grade cannot be set.";
+		return;
+	}
+
+	emit("editorSave", { id: open.id, grade: open.grade, feetage: open.feetage });
+	editor.value = null;
+}
 
 /**
  * Set while the grid scrolls itself to reveal a cell it is moving to.
@@ -378,6 +463,7 @@ defineExpose({ focusCell });
 			<span class="col col--size">Size</span>
 			<span v-if="ratesVisible" class="col col--rate">Rate</span>
 			<span v-if="ratesVisible" class="col col--net">Net</span>
+			<span class="col col--edit">Edit</span>
 		</div>
 
 		<div ref="viewport" class="grid__body" @scroll="onScroll">
@@ -430,6 +516,17 @@ defineExpose({ focusCell });
 				<span class="col col--size">{{ entry.row.size }}</span>
 				<span v-if="ratesVisible" class="col col--rate">{{ entry.row.rate || "" }}</span>
 				<span v-if="ratesVisible" class="col col--net">{{ entry.row.net_amount || "" }}</span>
+				<span class="col col--edit">
+					<button
+						type="button"
+						class="row__edit"
+						:disabled="readonly"
+						:title="`Edit row ${entry.row.idx}`"
+						@click="openEditor(entry.row)"
+					>
+						Edit
+					</button>
+				</span>
 			</div>
 
 			<div :style="{ height: `${window_.paddingBottom}px` }" />
@@ -457,6 +554,69 @@ defineExpose({ focusCell });
 			<li v-if="!picker.options.length" class="picker__item picker__item--empty">No matching grade</li>
 		</ul>
 
+		<!--
+			The single-row editor: Grade and Feetage for the one row whose Edit button was
+			pressed. Saving it never fills down - a corrected row must not rewrite the rows
+			beneath it. Escape or a click on the backdrop dismisses it.
+		-->
+		<div v-if="editor" class="editor" @click.self="editor = null" @keydown.esc="editor = null">
+			<div class="editor__box" role="dialog" aria-modal="true" :aria-label="`Edit row ${editor.idx}`">
+				<header class="editor__head">
+					<div>
+						<strong>Row {{ editor.idx }}</strong>
+						<span class="editor__sub">{{ editor.item_code }}</span>
+					</div>
+					<button type="button" class="editor__close" aria-label="Close" @click="editor = null">×</button>
+				</header>
+
+				<label class="editor__field">
+					<span class="editor__label">Grade</span>
+					<input
+						ref="editorGradeInput"
+						v-model="editor.grade"
+						type="text"
+						role="combobox"
+						aria-autocomplete="list"
+						spellcheck="false"
+						autocomplete="off"
+						@keydown="onEditorGradeKeydown"
+					/>
+				</label>
+
+				<ul v-if="editorOptions.length" class="editor__options">
+					<li
+						v-for="option in editorOptions"
+						:key="option"
+						class="editor__option"
+						:class="{ 'editor__option--on': option === editor.grade }"
+						@click="pickEditorGrade(option)"
+					>
+						{{ option }}
+					</li>
+				</ul>
+
+				<label class="editor__field">
+					<span class="editor__label">Feetage</span>
+					<input
+						ref="editorFeetageInput"
+						:value="editor.feetage"
+						type="text"
+						inputmode="decimal"
+						spellcheck="false"
+						autocomplete="off"
+						@input="onEditorFeetageInput"
+					/>
+				</label>
+
+				<p v-if="editor.error" class="editor__error">{{ editor.error }}</p>
+
+				<footer class="editor__actions">
+					<button type="button" class="btn" @click="editor = null">Cancel</button>
+					<button type="button" class="btn btn--primary" @click="editorSave">Save</button>
+				</footer>
+			</div>
+		</div>
+
 		<footer class="grid__foot">
 			<span>{{ measured }} of {{ rows.length }} measured</span>
 			<span class="hint">Enter or Down moves to the next hide. A grade fills every row below it.</span>
@@ -479,8 +639,8 @@ defineExpose({ focusCell });
 .grid__head,
 .row {
 	display: grid;
-	/* idx, item, skin, grade, feetage, size, rate, net */
-	grid-template-columns: 3.5rem 9rem 6rem 6rem 6rem 8rem 6rem 6rem;
+	/* idx, item, skin, grade, feetage, size, rate, net, edit */
+	grid-template-columns: 3.5rem 9rem 6rem 6rem 6rem 8rem 6rem 6rem 4rem;
 	align-items: center;
 	gap: 0.25rem;
 	padding: 0 0.5rem;
@@ -499,7 +659,7 @@ defineExpose({ focusCell });
 /* Rate and Net are withheld from operators without permlevel-1 read on Tounch Rate. */
 .grid--no-rates .grid__head,
 .grid--no-rates .row {
-	grid-template-columns: 3.5rem 9rem 6rem 6rem 6rem 8rem;
+	grid-template-columns: 3.5rem 9rem 6rem 6rem 6rem 8rem 4rem;
 }
 
 .grid__body {
@@ -603,6 +763,158 @@ defineExpose({ focusCell });
 .picker__item--empty {
 	color: var(--muted);
 	cursor: default;
+}
+
+.col--edit {
+	display: flex;
+	justify-content: flex-end;
+}
+
+.row__edit {
+	padding: 0.15rem 0.5rem;
+	font: inherit;
+	font-size: 0.75rem;
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	background: var(--surface-2);
+	color: inherit;
+	cursor: pointer;
+}
+
+.row__edit:hover:not(:disabled) {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.row__edit:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* The single-row editor: a dialog over the grid, so it never fights a scrolled viewport. */
+.editor {
+	position: fixed;
+	inset: 0;
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgb(0 0 0 / 45%);
+}
+
+.editor__box {
+	width: 20rem;
+	max-width: calc(100vw - 2rem);
+	box-sizing: border-box;
+	padding: 0.9rem;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--surface);
+	box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+.editor__head {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	margin-bottom: 0.8rem;
+}
+
+.editor__sub {
+	margin-left: 0.5rem;
+	color: var(--muted);
+	font-size: 0.8rem;
+}
+
+.editor__close {
+	border: 0;
+	background: none;
+	padding: 0;
+	font-size: 1rem;
+	line-height: 1;
+	color: var(--muted);
+	cursor: pointer;
+}
+
+.editor__field {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	margin-top: 0.6rem;
+}
+
+.editor__label {
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--muted);
+}
+
+.editor__field input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 0.3rem 0.5rem;
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	background: var(--surface);
+	color: inherit;
+	font: inherit;
+}
+
+.editor__field input:focus {
+	outline: none;
+	border-color: var(--accent);
+}
+
+.editor__options {
+	list-style: none;
+	margin: 0.3rem 0 0;
+	padding: 0.15rem;
+	max-height: 10rem;
+	overflow-y: auto;
+	border: 1px solid var(--line);
+	border-radius: 5px;
+	background: var(--surface);
+}
+
+.editor__option {
+	padding: 0.25rem 0.5rem;
+	border-radius: 3px;
+	cursor: pointer;
+}
+
+.editor__option--on {
+	background: var(--accent);
+	color: var(--surface);
+}
+
+.editor__error {
+	margin: 0.6rem 0 0;
+	color: var(--bad);
+	font-size: 0.8rem;
+}
+
+.editor__actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 0.5rem;
+	margin-top: 0.9rem;
+}
+
+.btn {
+	padding: 0.35rem 0.75rem;
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	background: var(--surface-2);
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.btn--primary {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: var(--surface);
 }
 
 /* Marked, never rewritten. */

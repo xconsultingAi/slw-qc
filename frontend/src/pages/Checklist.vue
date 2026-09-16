@@ -141,6 +141,34 @@ function onReject(message: string): void {
 }
 
 /**
+ * The row editor saved one row: apply the Grade and Feetage to that row only.
+ *
+ * Deliberately NOT `setGrade`, which fills a grade into every row below. This is the
+ * single-row correction path - a mis-graded hide in the middle of a run must be fixable
+ * without rewriting the rows beneath it.
+ */
+async function onEditorSave(payload: { id: number; grade: string; feetage: string }): Promise<void> {
+	const row = doc.value?.rows.find((candidate) => candidate.id === payload.id);
+	if (!row) return;
+
+	const typed = payload.grade.trim();
+	const patches: { id: number; grade?: string | null; feetage?: number }[] = [];
+
+	// A blank grade means "clear it" only when the row actually holds a grade.
+	if (typed !== (row.grade ?? "")) {
+		patches.push({ id: payload.id, grade: typed || null });
+	}
+
+	const parsed = Number.parseFloat(payload.feetage.replace(/,/g, "").trim());
+	const value = Number.isFinite(parsed) ? parsed : 0;
+	if (value !== row.feetage) {
+		patches.push({ id: payload.id, feetage: value });
+	}
+
+	if (patches.length) await apply(patches);
+}
+
+/**
  * Set a grade and carry it down every row below, as the desk form does.
  *
  * Hides are graded in runs, so the operator picks A once and changes it only where the
@@ -366,6 +394,7 @@ onMounted(() => {
 				:problem-rows="problemRows"
 				@commit="onCommit"
 				@reject="onReject"
+				@editor-save="onEditorSave"
 			/>
 
 			<aside class="side">
