@@ -7,7 +7,7 @@
  * trip is an IPC call to the same machine and never touches the network. What the
  * operator sees is therefore never waiting on ERPNext.
  */
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 
 import QcGrid from "../components/QcGrid.vue";
 import { fillDownTargets } from "../composables/grades";
@@ -29,7 +29,31 @@ const personsRow = ref<HTMLElement | null>(null);
 const selectors = ref<string[]>([]);
 const measurers = ref<string[]>([]);
 const personPicker = ref<"selector" | "measurer" | null>(null);
+const personSearch = ref("");
+const personSearchInput = ref<HTMLInputElement | null>(null);
 const employees = computed(() => store.reference?.employees ?? []);
+
+/**
+ * The employee list narrowed by what has been typed. Matches against both the employee
+ * name and the readable display name, case-insensitively, the way the desk form's Link
+ * multi-select suggests values.
+ */
+const filteredEmployees = computed(() => {
+	const needle = personSearch.value.trim().toLowerCase();
+	if (!needle) return employees.value;
+	return employees.value.filter(
+		(employee) =>
+			employee.name.toLowerCase().includes(needle) ||
+			(employee.employee_name ?? "").toLowerCase().includes(needle)
+	);
+});
+
+/** Open a person list, reset its search, and put the caret in the box. */
+function togglePersonPicker(kind: "selector" | "measurer"): void {
+	personPicker.value = personPicker.value === kind ? null : kind;
+	personSearch.value = "";
+	if (personPicker.value) void nextTick(() => personSearchInput.value?.focus());
+}
 /** Set aside so a fill-down can be undone; the desk form offers no way back. */
 const undo = ref<{ label: string; patches: { id: number; grade: string | null }[] } | null>(null);
 
@@ -247,13 +271,23 @@ onMounted(() => {
 						type="button"
 						class="persons__toggle"
 						:disabled="readonly"
-						@click.stop="personPicker = personPicker === 'selector' ? null : 'selector'"
+						@click.stop="togglePersonPicker('selector')"
 					>
 						{{ selectors.length ? selectors.map(personName).join(", ") : "Pick the selector(s)" }}
 					</button>
 					<ul v-if="personPicker === 'selector'" class="persons__list">
+						<li class="persons__search">
+							<input
+								ref="personSearchInput"
+								v-model="personSearch"
+								type="search"
+								placeholder="Search selector…"
+								autocomplete="off"
+								spellcheck="false"
+							/>
+						</li>
 						<li
-							v-for="employee in employees"
+							v-for="employee in filteredEmployees"
 							:key="employee.name"
 							class="persons__item"
 							:class="{ 'persons__item--on': selectors.includes(employee.name) }"
@@ -263,6 +297,9 @@ onMounted(() => {
 						</li>
 						<li v-if="!employees.length" class="persons__empty">
 							No employees have synced from ERPNext yet. Pull masters first.
+						</li>
+						<li v-else-if="!filteredEmployees.length" class="persons__empty">
+							No employee matches "{{ personSearch }}".
 						</li>
 					</ul>
 				</span>
@@ -275,13 +312,22 @@ onMounted(() => {
 						type="button"
 						class="persons__toggle"
 						:disabled="readonly"
-						@click.stop="personPicker = personPicker === 'measurer' ? null : 'measurer'"
+						@click.stop="togglePersonPicker('measurer')"
 					>
 						{{ measurers.length ? measurers.map(personName).join(", ") : "Pick the measurer(s)" }}
 					</button>
 					<ul v-if="personPicker === 'measurer'" class="persons__list">
+						<li class="persons__search">
+							<input
+								v-model="personSearch"
+								type="search"
+								placeholder="Search measurer…"
+								autocomplete="off"
+								spellcheck="false"
+							/>
+						</li>
 						<li
-							v-for="employee in employees"
+							v-for="employee in filteredEmployees"
 							:key="employee.name"
 							class="persons__item"
 							:class="{ 'persons__item--on': measurers.includes(employee.name) }"
@@ -291,6 +337,9 @@ onMounted(() => {
 						</li>
 						<li v-if="!employees.length" class="persons__empty">
 							No employees have synced from ERPNext yet. Pull masters first.
+						</li>
+						<li v-else-if="!filteredEmployees.length" class="persons__empty">
+							No employee matches "{{ personSearch }}".
 						</li>
 					</ul>
 				</span>
@@ -506,6 +555,23 @@ h1 {
 .persons__empty {
 	padding: 0.3rem 0.5rem;
 	color: var(--muted);
+	font-size: 0.8rem;
+}
+
+.persons__search {
+	padding: 0.25rem 0.15rem 0.35rem;
+	border-bottom: 1px solid var(--line-soft);
+	margin-bottom: 0.15rem;
+	position: sticky;
+	top: 0;
+	background: var(--surface);
+}
+
+.persons__search input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 0.3rem 0.5rem;
+	font: inherit;
 	font-size: 0.8rem;
 }
 
