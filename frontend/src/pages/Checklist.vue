@@ -58,8 +58,11 @@ async function commitPersons(): Promise<void> {
 	if (!doc.value) return;
 	try {
 		await window.qc.checklist.updateHeader(doc.value.local_name, {
-			selectors: selectors.value,
-			measurers: measurers.value,
+			// Vue refs are reactive Proxies, and Electron cannot structured-clone a Proxy
+			// across the IPC boundary — it throws "An object could not be cloned". Plain
+			// copies go across.
+			selectors: [...selectors.value],
+			measurers: [...measurers.value],
 		});
 	} catch (caught) {
 		error.value = (caught as Error).message;
