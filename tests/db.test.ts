@@ -17,6 +17,7 @@ import {
 	type PullResult,
 } from "../electron/db/repositories/masters";
 import {
+	appendRow,
 	applyServerConfirmation,
 	confirm,
 	createFromInward,
@@ -371,6 +372,51 @@ describe("checklist drafting", () => {
 	it("refuses to trim more rows than exist", () => {
 		const list = createFromInward(db, "IRH-1", "op");
 		expect(() => setReturnPieces(db, list.local_name, 99)).toThrow(/greater than available rows/);
+	});
+});
+
+describe("appending a row", () => {
+	beforeEach(() => applyPullResult(db, pullFixture()));
+
+	it("copies the last row and continues the numbering", () => {
+		const list = createFromInward(db, "IRH-1", "op");
+		const appendResult = appendRow(db, list.local_name)!;
+
+		expect(appendResult.rows).toHaveLength(6);
+		expect(appendResult.rows.map((r) => r.idx)).toEqual([1, 2, 3, 4, 5, 6]);
+
+		const last = appendResult.rows.at(-1)!;
+		expect(last.item_code).toBe(appendResult.rows[4]!.item_code);
+		expect(last.skin_type).toBe(appendResult.rows[4]!.skin_type);
+		expect(last.grade).toBe(appendResult.rows[4]!.grade);
+	});
+
+	it("carries a measurement forward so a missed hide is not silently recreated blank", () => {
+		const list = createFromInward(db, "IRH-1", "op");
+		const indexes = loadMasterIndexes(db);
+		saveRows(db, list.local_name, [{ id: list.rows.at(-1)!.id, feetage: 8, grade: "A" }], indexes);
+		const measured = loadChecklist(db, list.local_name)!.rows.at(-1)!;
+
+		const appended = appendRow(db, list.local_name)!.rows.at(-1)!;
+		expect(appended.grade).toBe("A");
+		expect(appended.feetage).toBe(8);
+		expect(appended.size).toBe(measured.size);
+	});
+
+	it("adds a single default row to an empty checklist instead of failing", () => {
+		const list = createFromInward(db, "IRH-1", "op");
+		sql(db, "DELETE FROM qc_check_list_details WHERE parent = ?").run(list.local_name);
+
+		const appended = appendRow(db, list.local_name)!.rows;
+		expect(appended).toHaveLength(1);
+		expect(appended[0]!.idx).toBe(1);
+		expect(appended[0]!.no_pieces).toBe(1);
+	});
+
+	it("refuses once the checklist can no longer be edited", () => {
+		const list = createFromInward(db, "IRH-1", "op");
+		sql(db, "UPDATE qc_check_lists SET state = 'confirmed' WHERE local_name = ?").run(list.local_name);
+		expect(() => appendRow(db, list.local_name)).toThrow(/can no longer be edited/);
 	});
 });
 

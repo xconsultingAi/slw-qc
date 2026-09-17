@@ -38,6 +38,7 @@ const emit = defineEmits<{
 	(event: "commit", payload: { id: number; field: "grade" | "feetage" | "status"; value: string }): void;
 	(event: "reject", message: string): void;
 	(event: "editorSave", payload: { id: number; grade: string; feetage: string }): void;
+	(event: "appendRow"): void;
 }>();
 
 const ROW_HEIGHT = 34;
@@ -662,7 +663,18 @@ defineExpose({ focusCell });
 		</div>
 
 		<footer class="grid__foot">
-			<span>{{ measured }} of {{ filtered.length }} measured</span>
+			<span class="foot__stats">
+				<span>{{ measured }} of {{ filtered.length }} measured</span>
+				<button
+					type="button"
+					class="foot__add"
+					:disabled="readonly"
+					:title="`Copy the last row (row ${filtered.length}) and add it as a new row`"
+					@click="emit('appendRow')"
+				>
+					Add row
+				</button>
+			</span>
 			<span class="hint">Enter or Down moves to the next hide. A grade fills every row below it.</span>
 		</footer>
 	</div>
@@ -1011,12 +1023,40 @@ defineExpose({ focusCell });
 .grid__foot {
 	display: flex;
 	justify-content: space-between;
+	align-items: center;
 	gap: 1rem;
 	padding: 0.4rem 0.75rem;
 	border-top: 1px solid var(--line);
 	background: var(--surface-2);
 	font-size: 0.8rem;
 	color: var(--muted);
+}
+
+.foot__stats {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+}
+
+.foot__add {
+	padding: 0.2rem 0.6rem;
+	font: inherit;
+	font-size: 0.75rem;
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	background: var(--surface);
+	color: inherit;
+	cursor: pointer;
+}
+
+.foot__add:hover:not(:disabled) {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.foot__add:disabled {
+	opacity: 0.5;
+	cursor: default;
 }
 
 .hint {

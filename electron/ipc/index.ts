@@ -14,6 +14,7 @@ import type { Db } from "../db/connection";
 import type { SyncEngine } from "../sync/engine";
 import type { ErpnextClient } from "../sync/erpnext";
 import {
+	appendRow,
 	confirm,
 	createFromInward,
 	listChecklists,
@@ -99,6 +100,8 @@ export function registerIpc(context: AppContext): void {
 	handle("checklist:return-pieces", (localName, count) =>
 		setReturnPieces(context.db(), localName as string, count as number)
 	);
+
+	handle("checklist:append-row", (localName) => appendRow(context.db(), localName as string));
 
 	handle("checklist:validate", (localName) => {
 		const list = loadChecklist(context.db(), localName as string);

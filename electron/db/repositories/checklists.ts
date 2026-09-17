@@ -378,6 +378,50 @@ export function setReturnPieces(db: Db, localName: string, count: number): numbe
 	})();
 }
 
+/**
+ * Add one more hide by copying the last row.
+ *
+ * The GRN explosion prices a hide per row, and the operator counts on that: a piece that
+ * did not exist in the GRN means a row the grid never gave them. This appends a duplicate
+ * of the last row - same item, skin and any measurement - so a missed piece can be added
+ * at the stack's end without re-exploding the GRN and losing the work already done.
+ */
+export function appendRow(db: Db, localName: string): Checklist | null {
+	assertEditable(db, localName);
+
+	return db.transaction(() => {
+		const last = sql(
+			db,
+			"SELECT * FROM qc_check_list_details WHERE parent = ? ORDER BY idx DESC LIMIT 1"
+		).get(localName) as DetailRow | undefined;
+
+		// Keep idx a running 1..n even when a GRN exploded to nothing.
+		sql(
+			db,
+			`INSERT INTO qc_check_list_details
+			   (parent, idx, item_code, item_name, skin_type, grade, size, status, feetage,
+			    no_pieces, rate, net_amount)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		).run(
+			localName,
+			(last?.idx ?? 0) + 1,
+			last?.item_code ?? null,
+			last?.item_name ?? null,
+			last?.skin_type ?? null,
+			last?.grade ?? null,
+			last?.size ?? null,
+			last?.status ?? null,
+			last?.feetage ?? 0,
+			last?.no_pieces ?? 1,
+			last?.rate ?? 0,
+			last?.net_amount ?? 0
+		);
+
+		recalculateTotal(db, localName);
+		return loadChecklist(db, localName);
+	})();
+}
+
 export interface ConfirmResult {
 	ok: boolean;
 	problems: RowProblem[];

@@ -169,6 +169,20 @@ async function onEditorSave(payload: { id: number; grade: string; feetage: strin
 }
 
 /**
+ * Copy the last row and append it, so a piece the GRN did not count can be measured
+ * without re-exploding the GRN and throwing the shift's work away.
+ */
+async function addRow(): Promise<void> {
+	error.value = null;
+	try {
+		await window.qc.checklist.appendRow(props.localName);
+		await load();
+	} catch (caught) {
+		error.value = (caught as Error).message;
+	}
+}
+
+/**
  * Set a grade and carry it down every row below, as the desk form does.
  *
  * Hides are graded in runs, so the operator picks A once and changes it only where the
@@ -395,6 +409,7 @@ onMounted(() => {
 				@commit="onCommit"
 				@reject="onReject"
 				@editor-save="onEditorSave"
+				@append-row="addRow"
 			/>
 
 			<aside class="side">
