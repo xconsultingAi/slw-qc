@@ -29,7 +29,6 @@ import type { DetailRow } from "../../../electron/preload";
 const props = defineProps<{
 	rows: DetailRow[];
 	grades: string[];
-	ratesVisible: boolean;
 	readonly: boolean;
 	problemRows: Set<number>;
 }>();
@@ -172,20 +171,14 @@ function editorSave(): void {
 let selfScroll = false;
 
 /** The columns a search box can narrow, matching the row columns, minus the Edit button. */
-const headColumns = computed<ColumnDef[]>(() => {
-	const defs: ColumnDef[] = [
-		{ key: "idx", label: "#" },
-		{ key: "item", label: "Item" },
-		{ key: "skin", label: "Skin Type" },
-		{ key: "grade", label: "Grade" },
-		{ key: "feetage", label: "Feetage" },
-		{ key: "size", label: "Size" },
-	];
-	if (props.ratesVisible) {
-		defs.push({ key: "rate", label: "Rate" }, { key: "net", label: "Net" });
-	}
-	return defs;
-});
+const headColumns = computed<ColumnDef[]>(() => [
+	{ key: "idx", label: "#" },
+	{ key: "item", label: "Item" },
+	{ key: "skin", label: "Skin Type" },
+	{ key: "grade", label: "Grade" },
+	{ key: "feetage", label: "Feetage" },
+	{ key: "size", label: "Size" },
+]);
 
 const editableColumns = computed(() => (props.readonly ? [] : ["grade", "feetage"]));
 
@@ -492,7 +485,7 @@ defineExpose({ focusCell });
 </script>
 
 <template>
-	<div class="grid" :class="{ 'grid--no-rates': !ratesVisible }">
+	<div class="grid">
 		<div class="grid__head">
 			<div v-for="column in headColumns" :key="column.key" class="hd" :class="`hd--${column.key}`">
 				<span class="hd__label">{{ column.label }}</span>
@@ -559,8 +552,6 @@ defineExpose({ focusCell });
 				</span>
 
 				<span class="col col--size">{{ entry.row.size }}</span>
-				<span v-if="ratesVisible" class="col col--rate">{{ entry.row.rate || "" }}</span>
-				<span v-if="ratesVisible" class="col col--net">{{ entry.row.net_amount || "" }}</span>
 				<span class="col col--edit">
 					<button
 						type="button"
@@ -695,8 +686,8 @@ defineExpose({ focusCell });
 .grid__head,
 .row {
 	display: grid;
-	/* idx, item, skin, grade, feetage, size, rate, net, edit */
-	grid-template-columns: 3.5rem 9rem 6rem 6rem 6rem 8rem 6rem 6rem 4rem;
+	/* idx, item, skin, grade, feetage, size, edit */
+	grid-template-columns: 3.5rem 9rem 6rem 6rem 6rem 8rem 4rem;
 	align-items: center;
 	gap: 0.25rem;
 	padding: 0 0.5rem;
@@ -751,12 +742,6 @@ defineExpose({ focusCell });
 .hd__filter:focus {
 	outline: none;
 	border-color: var(--accent);
-}
-
-/* Rate and Net are withheld from operators without permlevel-1 read on Tounch Rate. */
-.grid--no-rates .grid__head,
-.grid--no-rates .row {
-	grid-template-columns: 3.5rem 9rem 6rem 6rem 6rem 8rem 4rem;
 }
 
 .grid__body {

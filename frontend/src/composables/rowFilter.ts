@@ -9,7 +9,7 @@
 import type { DetailRow } from "../../../electron/preload";
 
 /** The grid columns a search box can filter on. */
-export type FilterKey = "idx" | "item" | "skin" | "grade" | "feetage" | "size" | "rate" | "net";
+export type FilterKey = "idx" | "item" | "skin" | "grade" | "feetage" | "size";
 
 export type RowFilters = Partial<Record<FilterKey, string>>;
 
@@ -28,10 +28,6 @@ export function rowSearchText(row: DetailRow, key: FilterKey): string {
 			return row.feetage ? String(row.feetage) : "";
 		case "size":
 			return row.size ?? "";
-		case "rate":
-			return row.rate ? String(row.rate) : "";
-		case "net":
-			return row.net_amount ? String(row.net_amount) : "";
 	}
 }
 

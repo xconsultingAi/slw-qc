@@ -394,16 +394,10 @@ onMounted(() => {
 		</p>
 		<p v-if="error" class="error">{{ error }}</p>
 
-		<p v-if="store.reference && !store.reference.ratesVisible" class="muted">
-			Touch rates are hidden because your account cannot read them. Sizes and pieces are
-			unaffected, and ERPNext still prices the checklist on submit.
-		</p>
-
 		<div class="body">
 			<QcGrid
 				:rows="doc.rows"
 				:grades="store.reference?.grades ?? []"
-				:rates-visible="store.reference?.ratesVisible ?? false"
 				:readonly="readonly"
 				:problem-rows="problemRows"
 				@commit="onCommit"
