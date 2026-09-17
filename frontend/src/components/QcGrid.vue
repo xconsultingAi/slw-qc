@@ -17,11 +17,12 @@
  *
  * Only the visible slice of rows is rendered, so a GRN of 2,000 hides costs what 40 do.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 import { caretAfterSanitize, sanitizeDecimal } from "../composables/decimalInput";
 import { gradeOptions, matchGrade } from "../composables/grades";
 import { nextPosition, type GridPosition } from "../composables/gridNavigation";
+import { filterRows, type FilterKey, type RowFilters } from "../composables/rowFilter";
 import { computeWindow, scrollToRow } from "../composables/virtualRows";
 import type { DetailRow } from "../../../electron/preload";
 
@@ -41,10 +42,18 @@ const emit = defineEmits<{
 
 const ROW_HEIGHT = 34;
 
+/** A header column: what to call it and whether it takes a search box. */
+interface ColumnDef {
+	key: FilterKey;
+	label: string;
+}
+
 const viewport = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
 const viewportHeight = ref(600);
 const active = ref<GridPosition>({ row: 0, column: "feetage" });
+/** One search box per header column; filtered rows repaint as the operator types. */
+const filters = reactive<RowFilters>({});
 /** The raw string being typed. Committed on blur, Enter or navigation. */
 const editing = ref<{ id: number; field: string; text: string } | null>(null);
 
@@ -161,25 +170,54 @@ function editorSave(): void {
  */
 let selfScroll = false;
 
-const columns = computed(() => (props.readonly ? [] : ["grade", "feetage"]));
+/** The columns a search box can narrow, matching the row columns, minus the Edit button. */
+const headColumns = computed<ColumnDef[]>(() => {
+	const defs: ColumnDef[] = [
+		{ key: "idx", label: "#" },
+		{ key: "item", label: "Item" },
+		{ key: "skin", label: "Skin Type" },
+		{ key: "grade", label: "Grade" },
+		{ key: "feetage", label: "Feetage" },
+		{ key: "size", label: "Size" },
+	];
+	if (props.ratesVisible) {
+		defs.push({ key: "rate", label: "Rate" }, { key: "net", label: "Net" });
+	}
+	return defs;
+});
+
+const editableColumns = computed(() => (props.readonly ? [] : ["grade", "feetage"]));
+
+/** The rows the filters let through; windowing renders only their visible slice. */
+const filtered = computed(() => filterRows(props.rows, filters));
 
 const window_ = computed(() =>
 	computeWindow({
 		scrollTop: scrollTop.value,
 		viewportHeight: viewportHeight.value,
 		rowHeight: ROW_HEIGHT,
-		rowCount: props.rows.length,
+		rowCount: filtered.value.length,
 	})
 );
 
 const visible = computed(() =>
-	props.rows.slice(window_.value.start, window_.value.end).map((row, offset) => ({
+	filtered.value.slice(window_.value.start, window_.value.end).map((row, offset) => ({
 		row,
 		index: window_.value.start + offset,
 	}))
 );
 
-const measured = computed(() => props.rows.filter((row) => Number(row.feetage) > 0).length);
+const measured = computed(() => filtered.value.filter((row) => Number(row.feetage) > 0).length);
+
+/** A filter reshapes the list under the caret, so park the grid back at the top. */
+watch(filters, () => {
+	scrollTop.value = 0;
+	if (viewport.value) viewport.value.scrollTop = 0;
+	closePicker();
+	if (active.value.row >= filtered.value.length) {
+		active.value = { row: Math.max(0, filtered.value.length - 1), column: active.value.column };
+	}
+});
 
 function onScroll(event: Event): void {
 	scrollTop.value = (event.target as HTMLElement).scrollTop;
@@ -294,7 +332,7 @@ function onKeydown(event: KeyboardEvent, rowIndex: number, column: string): void
 	const input = event.target as HTMLInputElement;
 
 	const result = nextPosition(event.key, { row: rowIndex, column }, {
-		columns: columns.value,
+		columns: editableColumns.value,
 		rowCount: props.rows.length,
 		atStart: input.selectionStart === 0 && input.selectionEnd === 0,
 		atEnd: input.selectionStart === input.value.length && input.selectionEnd === input.value.length,
@@ -455,15 +493,21 @@ defineExpose({ focusCell });
 <template>
 	<div class="grid" :class="{ 'grid--no-rates': !ratesVisible }">
 		<div class="grid__head">
-			<span class="col col--idx">#</span>
-			<span class="col col--item">Item</span>
-			<span class="col col--skin">Skin Type</span>
-			<span class="col col--grade">Grade</span>
-			<span class="col col--feet">Feetage</span>
-			<span class="col col--size">Size</span>
-			<span v-if="ratesVisible" class="col col--rate">Rate</span>
-			<span v-if="ratesVisible" class="col col--net">Net</span>
-			<span class="col col--edit">Edit</span>
+			<div v-for="column in headColumns" :key="column.key" class="hd" :class="`hd--${column.key}`">
+				<span class="hd__label">{{ column.label }}</span>
+				<input
+					v-model="filters[column.key]"
+					type="search"
+					class="hd__filter"
+					:aria-label="`Filter ${column.label}`"
+					:placeholder="column.label"
+					autocomplete="off"
+					spellcheck="false"
+				/>
+			</div>
+			<div class="hd hd--edit">
+				<span class="hd__label">Edit</span>
+			</div>
 		</div>
 
 		<div ref="viewport" class="grid__body" @scroll="onScroll">
@@ -618,7 +662,7 @@ defineExpose({ focusCell });
 		</div>
 
 		<footer class="grid__foot">
-			<span>{{ measured }} of {{ rows.length }} measured</span>
+			<span>{{ measured }} of {{ filtered.length }} measured</span>
 			<span class="hint">Enter or Down moves to the next hide. A grade fills every row below it.</span>
 		</footer>
 	</div>
@@ -647,13 +691,54 @@ defineExpose({ focusCell });
 }
 
 .grid__head {
-	height: 34px;
+	padding: 0.35rem 0.5rem 0.3rem;
 	font-size: 0.75rem;
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
 	color: var(--muted);
 	background: var(--surface-2);
 	border-bottom: 1px solid var(--line);
+	align-items: stretch;
+}
+
+/* Each header cell stacks its label over its filter box, in the same column track as
+   the rows beneath, so the filters line up with the cells they narrow. */
+.hd {
+	display: flex;
+	flex-direction: column;
+	gap: 0.12rem;
+	min-width: 0;
+}
+
+.hd--edit {
+	align-items: flex-end;
+	justify-content: center;
+}
+
+.hd__label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.hd__filter {
+	width: 100%;
+	box-sizing: border-box;
+	height: 20px;
+	padding: 0 0.3rem;
+	border: 1px solid var(--line);
+	border-radius: 3px;
+	background: var(--surface);
+	color: var(--text);
+	font: inherit;
+	font-size: 0.72rem;
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+.hd__filter:focus {
+	outline: none;
+	border-color: var(--accent);
 }
 
 /* Rate and Net are withheld from operators without permlevel-1 read on Tounch Rate. */
