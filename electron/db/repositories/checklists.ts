@@ -422,6 +422,35 @@ export function appendRow(db: Db, localName: string): Checklist | null {
 	})();
 }
 
+/**
+ * Remove one row by its id.
+ *
+ * The reverse of `appendRow`: the operator can take a hide back out of the grid. The
+ * remaining rows are renumbered so idx stays 1..n and the grid's row numbers keep
+ * matching the document the server will see.
+ */
+export function removeRow(db: Db, localName: string, id: number): Checklist | null {
+	assertEditable(db, localName);
+
+	return db.transaction(() => {
+		const existing = sql(db, "SELECT id FROM qc_check_list_details WHERE id = ? AND parent = ?").get(
+			id,
+			localName
+		) as { id: number } | undefined;
+		if (!existing) throw new Error(`Row ${id} does not belong to checklist ${localName}.`);
+
+		sql(db, "DELETE FROM qc_check_list_details WHERE id = ?").run(id);
+
+		const remaining = sql(db, "SELECT id FROM qc_check_list_details WHERE parent = ? ORDER BY idx")
+			.all(localName) as { id: number }[];
+		const renumber = sql(db, "UPDATE qc_check_list_details SET idx = ? WHERE id = ?");
+		remaining.forEach((row, position) => renumber.run(position + 1, row.id));
+
+		recalculateTotal(db, localName);
+		return loadChecklist(db, localName);
+	})();
+}
+
 export interface ConfirmResult {
 	ok: boolean;
 	problems: RowProblem[];

@@ -38,6 +38,7 @@ const emit = defineEmits<{
 	(event: "reject", message: string): void;
 	(event: "editorSave", payload: { id: number; grade: string; feetage: string }): void;
 	(event: "appendRow"): void;
+	(event: "removeRow", id: number): void;
 }>();
 
 const ROW_HEIGHT = 34;
@@ -54,6 +55,8 @@ const viewportHeight = ref(600);
 const active = ref<GridPosition>({ row: 0, column: "feetage" });
 /** One search box per header column; filtered rows repaint as the operator types. */
 const filters = reactive<RowFilters>({});
+/** The row picked for the footer's Remove row button; a click on a row selects it. */
+const selectedId = ref<number | null>(null);
 /** The raw string being typed. Committed on blur, Enter or navigation. */
 const editing = ref<{ id: number; field: string; text: string } | null>(null);
 
@@ -202,6 +205,13 @@ const visible = computed(() =>
 );
 
 const measured = computed(() => filtered.value.filter((row) => Number(row.feetage) > 0).length);
+
+/** The selected row among the rows currently shown, or null when hidden by a filter. */
+const selectedRow = computed(() => filtered.value.find((row) => row.id === selectedId.value) ?? null);
+
+function selectRow(row: DetailRow): void {
+	selectedId.value = row.id;
+}
 
 /** A filter reshapes the list under the caret, so park the grid back at the top. */
 watch(filters, () => {
@@ -481,6 +491,16 @@ watch(
 	}
 );
 
+// A reload replaced the rows: drop a selection whose row no longer exists.
+watch(
+	() => props.rows,
+	() => {
+		if (selectedId.value !== null && !props.rows.some((row) => row.id === selectedId.value)) {
+			selectedId.value = null;
+		}
+	}
+);
+
 defineExpose({ focusCell });
 </script>
 
@@ -511,9 +531,14 @@ defineExpose({ focusCell });
 				v-for="entry in visible"
 				:key="entry.row.id"
 				class="row"
-				:class="{ 'row--problem': problemRows.has(entry.row.idx), 'row--done': Number(entry.row.feetage) > 0 }"
+				:class="{
+					'row--problem': problemRows.has(entry.row.idx),
+					'row--done': Number(entry.row.feetage) > 0,
+					'row--selected': entry.row.id === selectedId,
+				}"
 				:data-row="entry.index"
 				:style="{ height: `${ROW_HEIGHT}px` }"
+				@click="selectRow(entry.row)"
 			>
 				<span class="col col--idx">{{ entry.row.idx }}</span>
 				<span class="col col--item" :title="entry.row.item_code ?? ''">{{ entry.row.item_code }}</span>
@@ -658,6 +683,19 @@ defineExpose({ focusCell });
 				<span>{{ measured }} of {{ filtered.length }} measured</span>
 				<button
 					type="button"
+					class="foot__add foot__add--remove"
+					:disabled="readonly || !selectedRow"
+					:title="
+						selectedRow
+							? `Remove the selected row (row ${selectedRow.idx})`
+							: 'Click a row to select it, then remove it'
+					"
+					@click="selectedRow && emit('removeRow', selectedRow.id)"
+				>
+					Remove
+				</button>
+				<button
+					type="button"
 					class="foot__add"
 					:disabled="readonly"
 					:title="`Copy the last row (row ${filtered.length}) and add it as a new row`"
@@ -761,6 +799,12 @@ defineExpose({ focusCell });
 
 .row--problem {
 	background: var(--bad-bg);
+}
+
+/* The row the Remove button would delete: a click anywhere on a row selects it. */
+.row--selected {
+	outline: 1px solid var(--accent);
+	outline-offset: -1px;
 }
 
 .col {
@@ -1042,6 +1086,11 @@ defineExpose({ focusCell });
 .foot__add:disabled {
 	opacity: 0.5;
 	cursor: default;
+}
+
+.foot__add--remove:hover:not(:disabled) {
+	border-color: var(--bad);
+	color: var(--bad);
 }
 
 .hint {

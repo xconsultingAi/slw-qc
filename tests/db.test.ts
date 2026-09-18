@@ -23,6 +23,7 @@ import {
 	createFromInward,
 	formatLocalName,
 	loadChecklist,
+	removeRow,
 	saveRows,
 	setReturnPieces,
 	updateHeader,
@@ -417,6 +418,56 @@ describe("appending a row", () => {
 		const list = createFromInward(db, "IRH-1", "op");
 		sql(db, "UPDATE qc_check_lists SET state = 'confirmed' WHERE local_name = ?").run(list.local_name);
 		expect(() => appendRow(db, list.local_name)).toThrow(/can no longer be edited/);
+	});
+});
+
+describe("removing a row", () => {
+	beforeEach(() => applyPullResult(db, pullFixture()));
+
+	it("deletes the row and renumbers the rest so idx stays 1..n", () => {
+		const list = createFromInward(db, "IRH-1", "op");
+		// Remove the third hide; the fourth must become 3, not stay 4.
+		const middle = list.rows[2]!;
+		const reloaded = removeRow(db, list.local_name, middle.id)!;
+
+		expect(reloaded.rows).toHaveLength(4);
+		expect(reloaded.rows.map((r) => r.idx)).toEqual([1, 2, 3, 4]);
+		expect(reloaded.rows.some((r) => r.id === middle.id)).toBe(false);
+	});
+
+	it("recalculates the grand total for what is left", () => {
+		const list = createFromInward(db, "IRH-1", "op");
+		const indexes = loadMasterIndexes(db);
+		saveRows(
+			db,
+			list.local_name,
+			list.rows.map((row) => ({ id: row.id, feetage: 10, grade: "A" })),
+			indexes
+		);
+		// 5 rows * 10 ft * 120 = 6000; removing one leaves 4800.
+		const reloaded = removeRow(db, list.local_name, list.rows[0]!.id)!;
+		expect(reloaded.rows).toHaveLength(4);
+		expect(reloaded.grand_total).toBe(4800);
+	});
+
+	it("becomes an empty checklist when the last row goes", () => {
+		const list = createFromInward(db, "IRH-1", "op");
+		let rows = list.rows;
+		while (rows.length) {
+			rows = removeRow(db, list.local_name, rows[0]!.id)!.rows;
+		}
+		expect(rows).toHaveLength(0);
+	});
+
+	it("refuses a row that does not belong to this checklist", () => {
+		const list = createFromInward(db, "IRH-1", "op");
+		expect(() => removeRow(db, list.local_name, 9999)).toThrow(/does not belong to checklist/);
+	});
+
+	it("refuses once the checklist can no longer be edited", () => {
+		const list = createFromInward(db, "IRH-1", "op");
+		sql(db, "UPDATE qc_check_lists SET state = 'queued' WHERE local_name = ?").run(list.local_name);
+		expect(() => removeRow(db, list.local_name, list.rows[0]!.id)).toThrow(/can no longer be edited/);
 	});
 });
 

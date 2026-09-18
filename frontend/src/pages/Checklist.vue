@@ -182,6 +182,17 @@ async function addRow(): Promise<void> {
 	}
 }
 
+/** Take one hide back out of the grid; the remaining rows are renumbered. */
+async function removeRow(id: number): Promise<void> {
+	error.value = null;
+	try {
+		await window.qc.checklist.removeRow(props.localName, id);
+		await load();
+	} catch (caught) {
+		error.value = (caught as Error).message;
+	}
+}
+
 /**
  * Set a grade and carry it down every row below, as the desk form does.
  *
@@ -404,6 +415,7 @@ onMounted(() => {
 				@reject="onReject"
 				@editor-save="onEditorSave"
 				@append-row="addRow"
+				@remove-row="removeRow"
 			/>
 
 			<aside class="side">

@@ -58,6 +58,7 @@ export interface QcApi {
 		load(localName: string): Promise<Checklist | null>;
 		saveRows(localName: string, patches: RowPatch[]): Promise<{ updated: number; grand_total: number }>;
 		appendRow(localName: string): Promise<Checklist | null>;
+		removeRow(localName: string, id: number): Promise<Checklist | null>;
 		updateHeader(
 			localName: string,
 			patch: { date?: string; addless?: number; selectors?: string[]; measurers?: string[] }
@@ -98,6 +99,7 @@ const api: QcApi = {
 		load: (localName) => invoke("checklist:load", localName),
 		saveRows: (localName, patches) => invoke("checklist:save-rows", localName, patches),
 		appendRow: (localName) => invoke("checklist:append-row", localName),
+		removeRow: (localName, id) => invoke("checklist:remove-row", localName, id),
 		updateHeader: (localName, patch) => invoke("checklist:update-header", localName, patch),
 		returnPieces: (localName, count) => invoke("checklist:return-pieces", localName, count),
 		validate: (localName) => invoke("checklist:validate", localName),

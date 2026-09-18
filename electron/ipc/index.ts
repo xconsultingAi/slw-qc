@@ -19,6 +19,7 @@ import {
 	createFromInward,
 	listChecklists,
 	loadChecklist,
+	removeRow,
 	saveRows,
 	setReturnPieces,
 	updateHeader,
@@ -102,6 +103,10 @@ export function registerIpc(context: AppContext): void {
 	);
 
 	handle("checklist:append-row", (localName) => appendRow(context.db(), localName as string));
+
+	handle("checklist:remove-row", (localName, id) =>
+		removeRow(context.db(), localName as string, id as number)
+	);
 
 	handle("checklist:validate", (localName) => {
 		const list = loadChecklist(context.db(), localName as string);
