@@ -149,12 +149,43 @@ CREATE TABLE IF NOT EXISTS inward_raw_hide_details (
 );
 CREATE INDEX IF NOT EXISTS ix_irh_detail_parent ON inward_raw_hide_details (parent);
 
+-- Merges are their own mirror, not a flag on Inward Raw Hide: Merge Inward Raw Hide is
+-- a separate doctype with its own child table, and every submitted merge is offered to
+-- the QC terminal exactly like an inward GRN. `grn_type` on qc_check_lists (below) says
+-- which mirror a checklist was built from, so the operator's Update-GRN-qty and the
+-- server's status flip target the right doctype.
+CREATE TABLE IF NOT EXISTS merge_inward_raw_hides (
+	name         TEXT PRIMARY KEY,
+	vendor       TEXT,
+	vendor_name  TEXT,
+	date         TEXT,
+	status       TEXT,
+	reference_no TEXT,
+	total_qty    INTEGER NOT NULL DEFAULT 0,
+	modified     TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_irh_status_merge ON merge_inward_raw_hides (status);
+
+CREATE TABLE IF NOT EXISTS merge_inward_raw_hide_details (
+	name      TEXT PRIMARY KEY,
+	parent    TEXT NOT NULL,
+	idx       INTEGER NOT NULL DEFAULT 0,
+	item_code TEXT,
+	item_name TEXT,
+	skin_type TEXT,
+	grade     TEXT,
+	no_pieces INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_irh_detail_parent_merge ON merge_inward_raw_hide_details (parent);
+
 -- --- local documents ----------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS qc_check_lists (
 	local_name    TEXT PRIMARY KEY,
 	offline_uuid  TEXT NOT NULL UNIQUE,
 	inward_no     TEXT,
+	grn_type      TEXT NOT NULL DEFAULT 'Inward Raw Hide'
+	              CHECK (grn_type IN ('Inward Raw Hide', 'Merge Inward Raw Hide')),
 	vendor        TEXT,
 	vendor_name   TEXT,
 	date          TEXT,

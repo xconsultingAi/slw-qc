@@ -104,6 +104,52 @@ describe("push", () => {
 		).toBe("Complete");
 	});
 
+	it("confirms a merge checklist by closing the merge mirror", async () => {
+		applyPullResult(db, {
+			rates_visible: true,
+			server_time: "now",
+			doctypes: {
+				"Merge Inward Raw Hide": {
+					permitted: true,
+					rows: [{ name: "MIRH-1", vendor: "V", vendor_name: "Vendor", date: "2026-09-01", status: "Pending", reference_no: "M", total_qty: 2, modified: "m1" }],
+					children: {
+						merge_raw_hide_details: [
+							{ name: "MD1", parent: "MIRH-1", idx: 1, item_code: "RAW", item_name: "Raw", skin_type: "Cow", grade: "A", no_pieces: 2 },
+						],
+					},
+					cursor: { modified: "m1", name: "MIRH-1" },
+					has_more: false,
+				},
+			},
+		});
+
+		const merge = createFromInward(db, "MIRH-1", "op");
+		const indexes = loadMasterIndexes(db);
+		saveRows(
+			db,
+			merge.local_name,
+			merge.rows.map((row) => ({ id: row.id, feetage: 20, grade: "A" })),
+			indexes
+		);
+		expect(confirm(db, merge.local_name).ok).toBe(true);
+		const uuid = loadChecklist(db, merge.local_name)!.offline_uuid;
+
+		const push = vi.fn(async (): Promise<{ results: PushResultRow[] }> => ({
+			results: [
+				{ offline_uuid: uuid, ok: true, name: "QCCL-2026-00002", docstatus: 1, inward_no: "MIRH-1", grn_type: "Merge Inward Raw Hide", inward_status: "Complete" },
+			],
+		}));
+
+		await new SyncEngine({ db, client: fakeClient({ push }) }).pushOnce();
+
+		expect(loadChecklist(db, merge.local_name)!.erp_name).toBe("QCCL-2026-00002");
+		expect(
+			(sql(db, "SELECT status FROM merge_inward_raw_hides WHERE name = 'MIRH-1'").get() as {
+				status: string;
+			}).status
+		).toBe("Complete");
+	});
+
 	it("sends only the fields the server does not recompute", async () => {
 		confirmedChecklist();
 		const push = vi.fn(async () => ({ results: [] as PushResultRow[] }));

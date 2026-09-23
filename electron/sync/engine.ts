@@ -171,12 +171,15 @@ export class SyncEngine {
 
 				if (result.ok && result.name) {
 					markConfirmed(db, result.offline_uuid, result.name);
+					const grnType =
+						result.grn_type === "Merge Inward Raw Hide" ? "Merge Inward Raw Hide" : "Inward Raw Hide";
 					applyServerConfirmation(
 						db,
 						result.offline_uuid,
 						result.name,
 						result.inward_no ?? null,
-						result.inward_status ?? null
+						result.inward_status ?? null,
+						grnType
 					);
 				} else {
 					markFailed(db, result.offline_uuid, result.error ?? "Rejected without a reason.");

@@ -24,6 +24,22 @@ export interface Patch {
 
 export const PATCHES: Patch[] = [];
 
+// The schema is applied with CREATE ... IF NOT EXISTS, so an existing station never
+// gains the newer columns. PATCHES close that gap, one guarded ALTER per release. The
+// guard matters: a fresh install already runs the current schema, so the ALTER must
+// turn into a no-op rather than dying on a duplicate column.
+PATCHES.push({
+	id: "qc_check_lists.grn_type",
+	run(db) {
+		const cols = new Set(
+			(db.prepare("PRAGMA table_info(qc_check_lists)").all() as { name: string }[]).map((c) => c.name)
+		);
+		if (!cols.has("grn_type")) {
+			db.exec("ALTER TABLE qc_check_lists ADD COLUMN grn_type TEXT NOT NULL DEFAULT 'Inward Raw Hide'");
+		}
+	},
+});
+
 export function openDatabase(filePath: string, schemaSql: string): Db {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 

@@ -46,6 +46,10 @@ const MASTER_TABLES: Record<string, { table: string; columns: string[] }> = {
 		table: "inward_raw_hides",
 		columns: ["name", "vendor", "vendor_name", "date", "status", "reference_no", "total_qty", "modified"],
 	},
+	"Merge Inward Raw Hide": {
+		table: "merge_inward_raw_hides",
+		columns: ["name", "vendor", "vendor_name", "date", "status", "reference_no", "total_qty", "modified"],
+	},
 };
 
 const CHILD_TABLES: Record<string, { table: string; columns: string[]; parentColumn: string }> = {
@@ -56,6 +60,11 @@ const CHILD_TABLES: Record<string, { table: string; columns: string[]; parentCol
 	},
 	raw_hide_details: {
 		table: "inward_raw_hide_details",
+		columns: ["name", "parent", "idx", "item_code", "item_name", "skin_type", "grade", "no_pieces"],
+		parentColumn: "parent",
+	},
+	merge_raw_hide_details: {
+		table: "merge_inward_raw_hide_details",
 		columns: ["name", "parent", "idx", "item_code", "item_name", "skin_type", "grade", "no_pieces"],
 		parentColumn: "parent",
 	},
@@ -221,6 +230,7 @@ export function loadMasterIndexes(db: Db): MasterIndexes {
 }
 
 export interface InwardOption {
+	grn_type: "Inward Raw Hide" | "Merge Inward Raw Hide";
 	name: string;
 	vendor: string | null;
 	vendor_name: string | null;
@@ -238,15 +248,30 @@ export interface InwardOption {
  * Mirrors the desk form's `set_query` on `inward_no` (submitted, not Complete), and
  * additionally reports any local checklist already covering the GRN. Without that, an
  * operator whose push has not yet gone through can start the same GRN twice.
+ *
+ * Both source doctypes are offered: submitted Inward Raw Hides and submitted Merge
+ * Inward Raw Hides. GRN names carry the IRH-/MIRH- series prefix, so a name is unique
+ * across the two mirrors and the LEFT JOIN on `inward_no` resolves against one table;
+ * `grn_type` tells the caller which mirror a row came from.
  */
 export function listOpenInwards(db: Db): InwardOption[] {
 	return sql(db,
-			`SELECT irh.name, irh.vendor, irh.vendor_name, irh.reference_no, irh.date, irh.status, irh.total_qty,
+			`SELECT 'Inward Raw Hide' AS grn_type, irh.name, irh.vendor, irh.vendor_name,
+			        irh.reference_no, irh.date, irh.status, irh.total_qty,
 			        qc.local_name AS local_checklist, qc.state AS local_state
 			   FROM inward_raw_hides irh
 			   LEFT JOIN qc_check_lists qc ON qc.inward_no = irh.name AND qc.state != 'failed'
 			  WHERE COALESCE(irh.status, '') NOT IN ('Complete', 'Draft')
-			  ORDER BY irh.date DESC, irh.name DESC`
+			 UNION ALL
+			SELECT 'Merge Inward Raw Hide' AS grn_type, mirh.name, mirh.vendor, mirh.vendor_name,
+			        mirh.reference_no, mirh.date, mirh.status, mirh.total_qty,
+			        qc.local_name AS local_checklist, qc.state AS local_state
+			   FROM merge_inward_raw_hides mirh
+			   LEFT JOIN qc_check_lists qc ON qc.inward_no = mirh.name AND qc.state != 'failed'
+			  WHERE COALESCE(mirh.status, '') NOT IN ('Complete', 'Draft')
+			  -- Positional: unqualified column names in a compound SELECT resolve against
+			  -- source columns, and the date column trips SQLite's matching here.
+			  ORDER BY 6 DESC, 2 DESC`
 		)
 		.all() as InwardOption[];
 }

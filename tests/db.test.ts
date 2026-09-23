@@ -7,6 +7,8 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import Database from "better-sqlite3";
+
 import { migrate, sql, type Db } from "../electron/db/connection";
 import { closeTestDb, openTestDb, resetTestDb, SCHEMA } from "./helpers/testDb";
 import {
@@ -106,6 +108,54 @@ function pullFixture(): PullResult {
 	};
 }
 
+/** pullFixture plus a submitted Merge Inward Raw Hide, so merge behaviour can be exercised. */
+function mergePullFixture(): PullResult {
+	const result = pullFixture();
+	result.doctypes["Merge Inward Raw Hide"] = {
+		permitted: true,
+		rows: [
+			{
+				name: "MIRH-1",
+				vendor: "V2",
+				vendor_name: "Vendor Two",
+				date: "2026-09-02",
+				status: "Pending",
+				reference_no: "M1",
+				total_qty: 4,
+				modified: "m1",
+			},
+			{
+				name: "MIRH-DONE",
+				vendor: "V2",
+				vendor_name: "Vendor Two",
+				date: "2026-09-02",
+				status: "Complete",
+				reference_no: "M2",
+				total_qty: 2,
+				modified: "m2",
+			},
+		],
+		children: {
+			merge_raw_hide_details: [
+				{
+					name: "MD1",
+					parent: "MIRH-1",
+					idx: 1,
+					item_code: "RAW-COW",
+					item_name: "Raw Cow",
+					skin_type: "Cow",
+					grade: "A",
+					no_pieces: 4,
+				},
+				{ name: "MD2", parent: "MIRH-DONE", idx: 1, item_code: "RAW-COW", item_name: "Raw Cow", skin_type: "Cow", grade: "A", no_pieces: 2 },
+			],
+		},
+		cursor: { modified: "m2", name: "MIRH-DONE" },
+		has_more: false,
+	};
+	return result;
+}
+
 beforeAll(() => {
 	db = openTestDb("db");
 });
@@ -128,6 +178,33 @@ describe("schema and migrations", () => {
 		applyPullResult(db, pullFixture());
 		migrate(db, SCHEMA);
 		expect((sql(db, "SELECT COUNT(*) AS n FROM grades").get() as { n: number }).n).toBe(2);
+	});
+
+	it("adds grn_type when upgrading a pre-merge database", () => {
+		// A station that shipped before merges has qc_check_lists without grn_type. The
+		// migration patch (not the schema, which is a no-op against an existing table) must
+		// add it so the repository's populated INSERT keeps working.
+		const legacy = SCHEMA.replace(
+			"grn_type      TEXT NOT NULL DEFAULT 'Inward Raw Hide'\n\t              CHECK (grn_type IN ('Inward Raw Hide', 'Merge Inward Raw Hide')),\n",
+			""
+		);
+
+		// Isolated in-memory handle: opening another file in the shared test DB would
+		// close the shared handle under it.
+		const handle = new Database(":memory:");
+		handle.exec(legacy);
+		expect(
+			(handle.prepare("PRAGMA table_info(qc_check_lists)").all() as { name: string }[]).some(
+				(c) => c.name === "grn_type"
+			)
+		).toBe(false);
+		migrate(handle, legacy);
+		expect(
+			(handle.prepare("PRAGMA table_info(qc_check_lists)").all() as { name: string }[]).some(
+				(c) => c.name === "grn_type"
+			)
+		).toBe(true);
+		handle.close();
 	});
 
 	it("cascades child rows when a checklist is deleted", () => {
@@ -217,6 +294,29 @@ describe("master mirror", () => {
 		expect(option!.local_checklist).toMatch(/^QC-\d{5}$/);
 		expect(option!.local_state).toBe("draft");
 	});
+
+	it("mirrors Merge Inward Raw Hide like an inward GRN, from its own tables", () => {
+		applyPullResult(db, mergePullFixture());
+
+		expect(
+			(sql(db, "SELECT COUNT(*) AS n FROM merge_inward_raw_hides").get() as { n: number }).n
+		).toBe(2);
+		expect(
+			(sql(db, "SELECT COUNT(*) AS n FROM merge_inward_raw_hide_details").get() as { n: number }).n
+		).toBe(2);
+		expect(readCursors(db)["Merge Inward Raw Hide"]).toEqual({ modified: "m2", name: "MIRH-DONE" });
+	});
+
+	it("offers open merges alongside open GRNs", () => {
+		applyPullResult(db, mergePullFixture());
+
+		const rows = listOpenInwards(db);
+		expect(rows.map((row) => row.name)).toEqual(["MIRH-1", "IRH-1"]);
+		// The checklist must know which mirror a row came from, so updates and the push
+		// hit the right doctype.
+		expect(rows.find((row) => row.name === "MIRH-1")!.grn_type).toBe("Merge Inward Raw Hide");
+		expect(rows.find((row) => row.name === "IRH-1")!.grn_type).toBe("Inward Raw Hide");
+	});
 });
 
 describe("local naming", () => {
@@ -298,6 +398,69 @@ describe("checklist drafting", () => {
 		expect(list.rows).toHaveLength(5); // 3 + 2 pieces
 		expect(list.rows.map((row) => row.idx)).toEqual([1, 2, 3, 4, 5]);
 		expect(list.vendor_name).toBe("Vendor One");
+	});
+
+	it("explodes a Merge Inward Raw Hide from its own child table", () => {
+		applyPullResult(db, mergePullFixture());
+		const list = createFromInward(db, "MIRH-1", "op");
+
+		expect(list.grn_type).toBe("Merge Inward Raw Hide");
+		expect(list.rows).toHaveLength(4);
+		expect(list.vendor_name).toBe("Vendor Two");
+		expect(
+			(sql(db, "SELECT grn_type FROM qc_check_lists WHERE local_name = ?").get(list.local_name) as {
+				grn_type: string;
+			}).grn_type
+		).toBe("Merge Inward Raw Hide");
+	});
+
+	it("reflects a merge confirmation by closing the merge mirror", () => {
+		applyPullResult(db, mergePullFixture());
+		const confirmed = createFromInward(db, "MIRH-1", "op");
+		applyServerConfirmation(
+			db,
+			confirmed.offline_uuid,
+			"QCCL-2026-00002",
+			"MIRH-1",
+			"Complete",
+			"Merge Inward Raw Hide"
+		);
+
+		const status = sql(db, "SELECT status FROM merge_inward_raw_hides WHERE name = 'MIRH-1'").get() as {
+			status: string;
+		};
+		expect(status.status).toBe("Complete");
+		expect(listOpenInwards(db).map((row) => row.name)).not.toContain("MIRH-1");
+	});
+
+	it("sends grn_type to the server so a merge is documented as one", () => {
+		applyPullResult(db, mergePullFixture());
+		const indexes = loadMasterIndexes(db);
+
+		const ready = (inwardNo: string) => {
+			const list = createFromInward(db, inwardNo, "op");
+			saveRows(
+				db,
+				list.local_name,
+				list.rows.map((row) => ({ id: row.id, feetage: 12, grade: "A" })),
+				indexes
+			);
+			return list.local_name;
+		};
+
+		const inwardLocal = ready("IRH-1");
+		confirm(db, inwardLocal);
+		const mergeLocal = ready("MIRH-1");
+		confirm(db, mergeLocal);
+
+		const payloads = (
+			sql(db, "SELECT payload_json FROM outbox ORDER BY local_name").all() as { payload_json: string }[]
+		).map((row) => JSON.parse(row.payload_json) as { inward_no: string; grn_type: string });
+
+		expect(payloads.map((p) => p.grn_type).sort()).toEqual(
+			["Inward Raw Hide", "Merge Inward Raw Hide"].sort()
+		);
+		expect(payloads.find((p) => p.inward_no === "MIRH-1")!.grn_type).toBe("Merge Inward Raw Hide");
 	});
 
 	it("does not carry the supplier's grade onto the QC rows", () => {

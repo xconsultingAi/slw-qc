@@ -18,6 +18,7 @@ import { enqueue } from "./outbox";
 import { validateForConfirm, type RowProblem } from "../../domain/validation";
 
 export type ChecklistState = "draft" | "queued" | "sent" | "confirmed" | "failed";
+export type GrnType = "Inward Raw Hide" | "Merge Inward Raw Hide";
 
 export interface DetailRow {
 	id: number;
@@ -38,6 +39,7 @@ export interface Checklist {
 	local_name: string;
 	offline_uuid: string;
 	inward_no: string | null;
+	grn_type: GrnType;
 	vendor: string | null;
 	vendor_name: string | null;
 	date: string | null;
@@ -107,18 +109,41 @@ function nextLocalName(db: Db): string {
 	return formatLocalName(next);
 }
 
+/** Source mirrors a checklist can be built from, keyed by the ERPNext grn_type. */
+const INWARD_MIRRORS: Record<GrnType, { table: string; detailTable: string }> = {
+	"Inward Raw Hide": { table: "inward_raw_hides", detailTable: "inward_raw_hide_details" },
+	"Merge Inward Raw Hide": {
+		table: "merge_inward_raw_hides",
+		detailTable: "merge_inward_raw_hide_details",
+	},
+};
+
+function findInwardMirror(db: Db, inwardNo: string) {
+	for (const [grnType, spec] of Object.entries(INWARD_MIRRORS) as [GrnType, { table: string; detailTable: string }][]) {
+		const row = sql(db, `SELECT vendor, vendor_name, date, status FROM ${spec.table} WHERE name = ?`).get(
+			inwardNo
+		) as { vendor: string | null; vendor_name: string | null; date: string | null; status: string | null } | undefined;
+		if (row) {
+			return { grn_type: grnType, detailTable: spec.detailTable, vendor: row.vendor ?? null, vendor_name: row.vendor_name ?? null, date: row.date ?? null, status: row.status ?? null };
+		}
+	}
+	return undefined;
+}
+
 /**
  * Explode a GRN into one draft row per hide.
  *
  * The desk form does the same thing and deliberately does NOT carry the grade across
  * from the inward row, even though Inward Raw Hide Detail requires one: the grade on
  * the GRN is the supplier's claim, and QC's job is to judge each hide for itself.
+ *
+ * The source can be either mirror - Inward Raw Hide or Merge Inward Raw Hide. GRN names
+ * carry the IRH-/MIRH- series prefix and are unique across the two tables, so the lookup
+ * just tries both and the checklist records which one it came from in `grn_type`.
  */
 export function createFromInward(db: Db, inwardNo: string, createdBy: string): Checklist {
-	const inward = sql(db, "SELECT * FROM inward_raw_hides WHERE name = ?").get(inwardNo) as
-		| { name: string; vendor: string; vendor_name: string; date: string; status: string | null }
-		| undefined;
-	if (!inward) throw new Error(`Inward Raw Hide ${inwardNo} is not in the local mirror. Pull first.`);
+	const inward = findInwardMirror(db, inwardNo);
+	if (!inward) throw new Error(`GRN ${inwardNo} is not in the local mirror. Pull first.`);
 
 	// One checklist per GRN. Exploding a second one is not a harmless duplicate: both would
 	// carry their own offline_uuid, both would submit, and the GRN would be measured twice
@@ -142,7 +167,7 @@ export function createFromInward(db: Db, inwardNo: string, createdBy: string): C
 		throw new Error(`${inwardNo} is already marked Complete in ERPNext and cannot be measured again.`);
 	}
 
-	const details = sql(db, "SELECT * FROM inward_raw_hide_details WHERE parent = ? ORDER BY idx")
+	const details = sql(db, `SELECT * FROM ${inward.detailTable} WHERE parent = ? ORDER BY idx`)
 		.all(inwardNo) as { item_code: string; item_name: string; skin_type: string; no_pieces: number }[];
 
 	return db.transaction(() => {
@@ -151,9 +176,18 @@ export function createFromInward(db: Db, inwardNo: string, createdBy: string): C
 
 		sql(db,
 			`INSERT INTO qc_check_lists
-			   (local_name, offline_uuid, inward_no, vendor, vendor_name, date, inward_date, state, created_by)
-			 VALUES (?, ?, ?, ?, ?, date('now'), ?, 'draft', ?)`
-		).run(localName, offlineUuid, inwardNo, inward.vendor, inward.vendor_name, inward.date, createdBy);
+			   (local_name, offline_uuid, inward_no, grn_type, vendor, vendor_name, date, inward_date, state, created_by)
+			 VALUES (?, ?, ?, ?, ?, ?, date('now'), ?, 'draft', ?)`
+		).run(
+			localName,
+			offlineUuid,
+			inwardNo,
+			inward.grn_type,
+			inward.vendor,
+			inward.vendor_name,
+			inward.date,
+			createdBy
+		);
 
 		const insertRow = sql(db,
 			`INSERT INTO qc_check_list_details (parent, idx, item_code, item_name, skin_type, no_pieces)
@@ -480,6 +514,9 @@ export function confirm(db: Db, localName: string): ConfirmResult {
 		const payload = {
 			offline_uuid: checklist.offline_uuid,
 			inward_no: checklist.inward_no,
+			// The server must document the checklist against the doctype it came from, or a
+			// merge would be pushed back at "Inward Raw Hide" and lose its identity.
+			grn_type: checklist.grn_type,
 			date: checklist.date,
 			addless: checklist.addless,
 			return_pieces: checklist.return_pieces,
@@ -522,15 +559,19 @@ export function applyServerConfirmation(
 	offlineUuid: string,
 	erpName: string,
 	inwardNo: string | null,
-	inwardStatus: string | null
+	inwardStatus: string | null,
+	grnType: GrnType = "Inward Raw Hide"
 ): void {
 	db.transaction(() => {
 		sql(db,
 			"UPDATE qc_check_lists SET state = 'confirmed', erp_name = ?, updated_at = datetime('now') WHERE offline_uuid = ?"
 		).run(erpName, offlineUuid);
 
+		// Flip whichever mirror the checklist was built from to the status on_submit set,
+		// so a finished merge stops appearing in the picker just like a finished GRN.
 		if (inwardNo && inwardStatus) {
-			sql(db, "UPDATE inward_raw_hides SET status = ? WHERE name = ?").run(inwardStatus, inwardNo);
+			const table = INWARD_MIRRORS[grnType]?.table ?? "inward_raw_hides";
+			sql(db, `UPDATE ${table} SET status = ? WHERE name = ?`).run(inwardStatus, inwardNo);
 		}
 	})();
 }

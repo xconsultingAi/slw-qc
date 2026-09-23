@@ -69,7 +69,11 @@ export interface QcApi {
 		confirm(localName: string): Promise<{ ok: boolean; problems: RowProblem[] }>;
 	};
 	inward: {
-		updateQty(inwardNo: string, addless: number): Promise<{ no_pieces: number; total_qty: number }>;
+		updateQty(
+			inwardNo: string,
+			addless: number,
+			grnType?: string
+		): Promise<{ no_pieces: number; total_qty: number }>;
 	};
 	sync: {
 		status(): Promise<SyncStatus>;
@@ -107,7 +111,7 @@ const api: QcApi = {
 		confirm: (localName) => invoke("checklist:confirm", localName),
 	},
 	inward: {
-		updateQty: (inwardNo, addless) => invoke("inward:update-qty", inwardNo, addless),
+		updateQty: (inwardNo, addless, grnType) => invoke("inward:update-qty", inwardNo, addless, grnType),
 	},
 	sync: {
 		status: () => invoke("sync:status"),

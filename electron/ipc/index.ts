@@ -127,8 +127,10 @@ export function registerIpc(context: AppContext): void {
 	});
 
 	// --- inward qty, which mutates a submitted document and so needs the network ---
-	handle("inward:update-qty", async (inwardNo, addless) =>
-		context.client().updateInwardQty(inwardNo as string, addless as number)
+	handle("inward:update-qty", async (inwardNo, addless, grnType) =>
+		context
+			.client()
+			.updateInwardQty(inwardNo as string, addless as number, (grnType as string) ?? "Inward Raw Hide")
 	);
 
 	// --- sync and queue ---

@@ -13,6 +13,7 @@ import type { InwardOption } from "../electron/preload";
 
 function grn(overrides: Partial<InwardOption> = {}): InwardOption {
 	return {
+		grn_type: "Inward Raw Hide",
 		name: "IRH-2026-00001",
 		vendor: "SUP-0001",
 		vendor_name: "Hide Traders Ltd",

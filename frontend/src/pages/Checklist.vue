@@ -266,7 +266,7 @@ async function updateInwardQty(): Promise<void> {
 	if (!doc.value?.inward_no) return;
 	error.value = null;
 	try {
-		const result = await window.qc.inward.updateQty(doc.value.inward_no, doc.value.addless);
+		const result = await window.qc.inward.updateQty(doc.value.inward_no, doc.value.addless, doc.value.grn_type);
 		notice.value = `Inward pieces updated to ${result.no_pieces}; total is now ${result.total_qty}.`;
 	} catch (caught) {
 		// This writes to a submitted document, so it is the one action that genuinely

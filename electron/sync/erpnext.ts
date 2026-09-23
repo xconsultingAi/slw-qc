@@ -44,6 +44,7 @@ export interface PushResultRow {
 	name?: string;
 	docstatus?: number;
 	inward_no?: string | null;
+	grn_type?: string | null;
 	inward_status?: string | null;
 	error?: string;
 }
@@ -160,10 +161,11 @@ export class ErpnextClient {
 		});
 	}
 
-	updateInwardQty(inwardNo: string, addless: number) {
+	updateInwardQty(inwardNo: string, addless: number, grnType: string = "Inward Raw Hide") {
 		return this.call<{ no_pieces: number; total_qty: number }>("update_inward_qty", TIMEOUTS.default, {
 			inward_no: inwardNo,
 			addless,
+			grn_type: grnType,
 		});
 	}
 }
